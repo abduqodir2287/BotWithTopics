@@ -1,9 +1,11 @@
 """
-Telegram бот с поддержкой топиков (threaded mode)
+Telegram бот с поддержкой топиков (threaded mode) и Telegram Streaming API
 """
 
 import asyncio
 import logging
+from weakref import finalize
+
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
 from aiogram.types import Message
@@ -18,7 +20,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Токен бота (замените на свой)
+# Токен бота
 BOT_TOKEN = settings.TELEGRAM_BOT_TOKEN
 
 # Инициализация бота и диспетчера
@@ -27,6 +29,37 @@ dp = Dispatcher()
 
 # Хранилище для топиков пользователей
 user_topics = {}
+
+
+async def send_streaming_message(message: Message, text: str, chunk_size: int = 20):
+    """
+    Отправка сообщения с использованием Telegram Streaming API
+
+    Args:
+        message: Исходное сообщение
+        text: Текст для отправки
+        chunk_size: Размер чанка для streaming
+    """
+    words = text.split()
+    current_text = ""
+
+    # Показываем streaming эффект
+    for i, word in enumerate(words):
+        current_text += word
+        if i < len(words) - 1:
+            current_text += " "
+
+        # Отправляем промежуточные чанки через send_message_draft
+        if (i + 1) % chunk_size == 0 and i < len(words) - 1:
+            await message.bot.send_message_draft(
+                chat_id=message.chat.id,
+                text=current_text,
+                draft_id=message.message_id,
+                message_thread_id=message.message_thread_id,
+            )
+
+    # ВАЖНО: Финальное сообщение отправляем обычным способом для сохранения в истории
+    await message.answer(text=current_text)
 
 
 @dp.message(Command("start"))
@@ -38,17 +71,16 @@ async def cmd_start(message: Message):
     user_id = message.from_user.id
     user_name = message.from_user.first_name or "пользователь"
 
-    print(f"Топики включены или нет: {message.from_user.has_topics_enabled}")
-
     welcome_text = (
         f"👋 Привет, {user_name}!\n\n"
         "Я бот с поддержкой топиков (threaded mode).\n\n"
         "📝 Каждое твое сообщение будет создавать новый топик, "
         "и я буду отвечать в том же топике!\n\n"
-        "Просто напиши мне что-нибудь, и я создам топик для нашей беседы."
+        "Просто напиши мне что-нибудь, и я создам топик для нашей беседы.\n\n"
+        "✨ Все мои ответы отправляются с использованием Telegram Streaming API!"
     )
 
-    await message.answer(welcome_text)
+    await send_streaming_message(message, welcome_text, chunk_size=15)
     logger.info(f"Пользователь {user_id} ({user_name}) запустил бота")
 
 
@@ -64,10 +96,11 @@ async def cmd_help(message: Message):
         "🔹 /info - Информация о текущем топике\n\n"
         "📌 Как работает бот:\n"
         "Отправьте любое сообщение, и бот ответит в том же топике, "
-        "предоставив информацию о нем."
+        "предоставив информацию о нем.\n\n"
+        "✨ Все ответы используют Telegram Streaming API!"
     )
 
-    await message.reply(help_text)
+    await send_streaming_message(message, help_text, chunk_size=15)
 
 
 @dp.message(Command("info"))
@@ -94,7 +127,7 @@ async def cmd_info(message: Message):
             "Отправьте обычное сообщение, чтобы создать топик."
         )
 
-    await message.reply(info_text)
+    await send_streaming_message(message, info_text, chunk_size=10)
 
 
 @dp.message(F.text)
@@ -145,8 +178,8 @@ async def handle_message(message: Message):
             f"каждое новое сообщение должно создавать топик автоматически."
         )
 
-    # Отправляем ответ в тот же топик
-    await message.reply(response)
+    # Отправляем ответ с использованием streaming
+    await send_streaming_message(message, response, chunk_size=20)
 
 
 @dp.message(F.photo)
@@ -158,7 +191,7 @@ async def handle_photo(message: Message):
 
     response = (
         f"📷 Получил фото!\n\n"
-        f"<b>Информация:</b>\n"
+        f"Информация:\n"
         f"🆔 ID топика: {topic_id or 'Нет'}\n"
         f"👤 От: {message.from_user.full_name}\n"
         f"💬 ID сообщения: {message.message_id}"
@@ -167,7 +200,8 @@ async def handle_photo(message: Message):
     if message.caption:
         response += f"\n📝 Подпись: {message.caption}"
 
-    await message.reply(response)
+    await send_streaming_message(message, response, chunk_size=15)
+    await message.topic
 
 
 @dp.message(F.document)
@@ -187,7 +221,70 @@ async def handle_document(message: Message):
         f"👤 От: {message.from_user.full_name}"
     )
 
-    await message.reply(response)
+    await send_streaming_message(message, response, chunk_size=15)
+
+
+@dp.message(F.video)
+async def handle_video(message: Message):
+    """
+    Обработчик видео
+    """
+    topic_id = message.message_thread_id
+    video = message.video
+
+    response = (
+        f"🎥 Получил видео!\n\n"
+        f"Информация:\n"
+        f"⏱ Длительность: {video.duration} сек\n"
+        f"📏 Размер: {video.file_size / (1024 * 1024):.2f} MB\n"
+        f"🆔 ID топика: {topic_id or 'Нет'}\n"
+        f"👤 От: {message.from_user.full_name}"
+    )
+
+    if message.caption:
+        response += f"\n📝 Подпись: {message.caption}"
+
+    await send_streaming_message(message, response, chunk_size=15)
+
+
+@dp.message(F.voice)
+async def handle_voice(message: Message):
+    """
+    Обработчик голосовых сообщений
+    """
+    topic_id = message.message_thread_id
+    voice = message.voice
+
+    response = (
+        f"🎤 Получил голосовое сообщение!\n\n"
+        f"Информация:\n"
+        f"⏱ Длительность: {voice.duration} сек\n"
+        f"📏 Размер: {voice.file_size / 1024:.2f} KB\n"
+        f"🆔 ID топика: {topic_id or 'Нет'}\n"
+        f"👤 От: {message.from_user.full_name}"
+    )
+
+    await send_streaming_message(message, response, chunk_size=15)
+
+
+@dp.message(F.sticker)
+async def handle_sticker(message: Message):
+    """
+    Обработчик стикеров
+    """
+    topic_id = message.message_thread_id
+    sticker = message.sticker
+
+    response = (
+        f"🎨 Получил стикер!\n\n"
+        f"Информация:\n"
+        f"😀 Emoji: {sticker.emoji or 'Нет'}\n"
+        f"📦 Набор: {sticker.set_name or 'Неизвестно'}\n"
+        f"🆔 ID топика: {topic_id or 'Нет'}\n"
+        f"👤 От: {message.from_user.full_name}"
+    )
+
+    await send_streaming_message(message, response, chunk_size=15)
 
 
 @dp.message()
@@ -197,7 +294,6 @@ async def handle_other(message: Message):
     """
     topic_id = message.message_thread_id
     content_type = message.content_type
-    print(topic_id, "||||", content_type)
 
     response = (
         f"📩 Получил сообщение типа: {content_type}\n\n"
@@ -207,21 +303,21 @@ async def handle_other(message: Message):
         f"💬 ID сообщения: {message.message_id}"
     )
 
-    await message.reply(response)
+    await send_streaming_message(message, response, chunk_size=15)
 
 
 async def main():
     """
     Главная функция запуска бота
     """
-    logger.info("🚀 Запуск бота...")
+    logger.info("🚀 Запуск бота с Telegram Streaming API...")
 
     try:
         # Удаляем webhook (если был установлен)
         await bot.delete_webhook(drop_pending_updates=True)
 
         # Запускаем polling
-        logger.info("✅ Бот успешно запущен!")
+        logger.info("✅ Бот успешно запущен с поддержкой streaming!")
         await dp.start_polling(bot)
     except Exception as e:
         logger.error(f"❌ Ошибка при запуске бота: {e}")
