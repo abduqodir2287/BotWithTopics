@@ -6,10 +6,11 @@ import asyncio
 import logging
 from weakref import finalize
 
-from aiogram import Bot, Dispatcher, F
+from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.types import Message
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramBadRequest
 
 from src.configs.config import settings
 
@@ -83,6 +84,75 @@ async def cmd_start(message: Message):
     await send_streaming_message(message, welcome_text, chunk_size=15)
     logger.info(f"Пользователь {user_id} ({user_name}) запустил бота")
 
+
+# 1. СОЗДАНИЕ ТОПИКА
+@dp.message(Command("create"))
+async def create_topic(message: types.Message):
+    # Создаем топик в текущем личном чате
+    topic = await bot.create_forum_topic(
+        chat_id=message.chat.id,
+        name="Новая заявка #12345"
+    )
+    await message.answer(f"✅ Топик создан! ID ветки: {topic.message_thread_id}")
+
+
+# 2. ИЗМЕНЕНИЕ ТОПИКА (RENAME)
+@dp.message(Command("edit"))
+async def edit_topic(message: types.Message):
+    thread_id = message.message_thread_id
+
+    if not thread_id:
+        return await message.answer("Эта команда должна быть вызвана внутри топика!")
+
+    try:
+        await bot.edit_forum_topic(
+            chat_id=message.chat.id,
+            message_thread_id=thread_id,
+            name="✅ Заявка исполнена"
+        )
+        await message.answer("📝 Название топика изменено.")
+    except TelegramBadRequest as e:
+        await message.answer(f"Ошибка: {e.message}")
+
+
+@dp.message(Command("delete"))
+async def delete_topic(message: types.Message):
+    thread_id = message.message_thread_id
+
+    if not thread_id or thread_id == 1:
+        return await message.answer("❌ Эту ветку (General) удалить нельзя.")
+
+    # Получаем информацию о чате
+    chat = await bot.get_chat(message.chat.id)
+
+    print(f"Chat type: {chat.type}")
+    print(f"Thread ID: {thread_id}")
+    print(f"Message from: {message.from_user.id}")
+
+    try:
+        # Теперь удаляем
+        await bot.delete_forum_topic(
+            chat_id=message.chat.id,
+            message_thread_id=thread_id
+        )
+
+        await message.answer("✅ Топик удален!")
+        print(f"✅ Топик {thread_id} удален успешно")
+
+    except TelegramBadRequest as e:
+        print(f"❌ Ошибка: {e.message}")
+
+        if "TOPIC_ID_INVALID" in e.message:
+            await message.answer(
+                "❌ Не удалось удалить топик.\n\n"
+                "Возможные причины:\n"
+                "• Топик был создан вами, а не ботом\n"
+                "• Топик уже удален\n"
+                "• Это системный топик (General)\n\n"
+                "💡 Попробуйте удалить топик вручную через меню Telegram"
+            )
+        else:
+            await message.answer(f"❌ Ошибка: {e.message}")
 
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
@@ -287,23 +357,23 @@ async def handle_sticker(message: Message):
     await send_streaming_message(message, response, chunk_size=15)
 
 
-@dp.message()
-async def handle_other(message: Message):
-    """
-    Обработчик остальных типов сообщений
-    """
-    topic_id = message.message_thread_id
-    content_type = message.content_type
-
-    response = (
-        f"📩 Получил сообщение типа: {content_type}\n\n"
-        f"Информация о топике:\n"
-        f"🆔 ID топика: {topic_id or 'Нет'}\n"
-        f"👤 От: {message.from_user.full_name}\n"
-        f"💬 ID сообщения: {message.message_id}"
-    )
-
-    await send_streaming_message(message, response, chunk_size=15)
+# @dp.message()
+# async def handle_other(message: Message):
+#     """
+#     Обработчик остальных типов сообщений
+#     """
+#     topic_id = message.message_thread_id
+#     content_type = message.content_type
+#
+#     response = (
+#         f"📩 Получил сообщение типа: {content_type}\n\n"
+#         f"Информация о топике:\n"
+#         f"🆔 ID топика: {topic_id or 'Нет'}\n"
+#         f"👤 От: {message.from_user.full_name}\n"
+#         f"💬 ID сообщения: {message.message_id}"
+#     )
+#
+#     await send_streaming_message(message, response, chunk_size=15)
 
 
 async def main():
