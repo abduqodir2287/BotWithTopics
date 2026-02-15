@@ -1,16 +1,33 @@
-# This is a sample Python script.
+import asyncio
+import aiohttp
+from aiogram import Bot
+from aiogram.exceptions import TelegramBadRequest
 
-# Press Shift+F10 to execute it or replace it with your code.
-# Press Double Shift to search everywhere for classes, files, tool windows, actions, and settings.
+from src.configs.config import settings
+
+# Твой токен
+API_TOKEN = settings.TELEGRAM_BOT_TOKEN
 
 
-def print_hi(name):
-    # Use a breakpoint in the code line below to debug your script.
-    print(f'Hi, {name}')  # Press Ctrl+F8 to toggle the breakpoint.
+async def delete_topic_via_http():
+    # URL метода API
+    url = f"https://api.telegram.org/bot{API_TOKEN}/deleteForumTopic"
 
+    # Параметры запроса
+    payload = {
+        'chat_id': "ChatId",  # Твой chat_id
+        'message_thread_id': 93189  # ID топика
+    }
 
-# Press the green button in the gutter to run the script.
-if __name__ == '__main__':
-    print_hi('PyCharm')
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, json=payload) as response:
+            result = await response.json()
 
-# See PyCharm help at https://www.jetbrains.com/help/pycharm/
+            if result.get("ok"):
+                print("Успех: Топик удален.")
+            else:
+                print(f"Ошибка: {result.get('description')}")
+
+# Запуск
+if __name__ == "__main__":
+    asyncio.run(delete_topic_via_http())
